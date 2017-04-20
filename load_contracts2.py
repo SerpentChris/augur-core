@@ -451,11 +451,17 @@ class ContractLoader(object):
 
     def __getattr__(self, name):
         """Use it like a namedtuple!"""
-        return self.__contracts[name]
+        try:
+            return self.__contracts[name]
+        except KeyError:
+            raise LoadContractsError('{!r} is not a contract!', name)
 
     def __getitem__(self, name):
         """Use it like a dict!"""
-        return self.__contracts[name]
+        try:
+            return self.__contracts[name]
+        except KeyError:
+            raise LoadContractsError('{!r} is not a contract!', name)
 
     def cleanup(self):
         """Deletes temporary files."""
