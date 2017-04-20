@@ -471,7 +471,7 @@ class ContractLoader(object):
         """ContractLoaders try to clean up after themselves."""
         self.cleanup()
 
-    def recompile(self, source_dir, name):
+    def recompile(self, name):
         """Gets the latest copy of the code from the source path, recompiles, and updates controller."""
         for file in self.__temp_dir.find_files(SERPENT_EXT):
             if path_to_name(file) == name:
@@ -483,8 +483,8 @@ class ContractLoader(object):
         update_externs(self.__temp_dir.temp_source_dir, self.get_address('controller'))
         self.__contracts[name] = self.__state.abi_contract(file)
         self.controller.setValue(name.ljust(32, '\x00'), self.__contracts[name].address)
-        self.controller.addToWhitelist(self.__contracts[name].address)   
-        self.__state.mine()     
+        self.controller.addToWhitelist(self.__contracts[name].address)
+        self.__state.mine()
 
     def get_address(self, name):
         """Hex-encoded address of the contract."""
