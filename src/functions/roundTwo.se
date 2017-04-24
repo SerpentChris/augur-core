@@ -22,10 +22,13 @@ BACKSTOPS = self.controller.lookup('backstops')
 extern backstops: [adjForkBondPaid:[int256,int256]:int256, doRoundTwoRefund:[int256,int256]:int256, getBondAmount:[int256]:int256, getBondPaid:[int256]:int256, getBondPoster:[int256]:int256, getBondReturned:[int256]:int256, getDisputedOverEthics:[int256]:int256, getFinal:[int256]:int256, getForkBondPaid:[int256]:int256, getForkBondPoster:[int256]:int256, getForkedOverEthicality:[int256]:int256, getMoved:[int256]:int256, getOriginalBranch:[int256]:int256, getOriginalEthicality:[int256]:int256, getOriginalOutcome:[int256]:int256, getOriginalVotePeriod:[int256]:int256, getResolved:[int256,int256]:int256, getRoundTwo:[int256]:int256, increaseBondPaid:[int256,int256]:int256, setBondAmount:[int256,int256]:int256, setBondPoster:[int256,int256]:int256, setBondReturned:[int256]:int256, setDisputedOverEthics:[int256]:int256, setFinal:[int256]:int256, setForkBondPoster:[int256,int256]:int256, setForkedOverEthicality:[int256]:int256, setMoved:[int256]:int256, setOriginalBranch:[int256,int256]:int256, setOriginalEthicality:[int256,int256]:int256, setOriginalOutcome:[int256,int256]:int256, setOriginalVotePeriod:[int256,int256]:int256, setResolved:[int256,int256,int256]:int256, setRoundTwo:[int256,int256]:int256, setRoundTwoRefund:[int256,int256]:int256]
 
 SENDREP = self.controller.lookup('sendReputation')
-extern sendReputation: [allowance:[int256,int256,int256]:int256, approve:[int256,int256,int256]:int256, claimRep:[]:int256, convertToActiveRep:[int256,int256]:int256, convertToDormantRep:[int256,int256]:int256, sendRepFrom:[int256,int256,int256,int256]:int256, transferFrom:[int256,int256,int256,int256]:int256]
+extern sendReputation: [allowance:[int256,int256,int256]:int256, approve:[int256,int256,int256]:int256, claimRep:[]:int256, sendRepFrom:[int256,int256,int256,int256]:int256, transferFrom:[int256,int256,int256,int256]:int256]
 
-RESOLVE = self.controller.lookup('eventResolution')
-extern eventResolution: [determineWinningOutcomes:[int256]:int256[], resolveBinary:[int256,int256,int256,int256]:int256, resolveCategoricalOrScalar:[int256,int256,int256,int256,int256,int256]:int256]
+BINARYRESOLVE = self.controller.lookup('binaryMarketResolve')
+extern binaryMarketResolve: [resolveBinary:[int256,int256,int256,int256]:int256]
+
+NONBINARYRESOLVE = self.controller.lookup('nonBinaryMarketResolve')
+extern nonBinaryMarketResolve: [resolveCategoricalOrScalar:[int256,int256,int256,int256,int256,int256]:int256]
 
 MUTEX = self.controller.lookup('mutex')
 extern mutex: [getMutex:[]:int256, setMutex:[]:int256, unsetMutex:[]:int256]
@@ -55,15 +58,13 @@ macro MIN_BOND: 200 * ONE
     # -3: event has no votes so far
     # throw()s if not enough msg.value to cover resolution cost or not a large enough bond
 def init():
-    self.controller = 0xC001D00D
+    self.controller = 0x0
 
 def ok():
     return(2)
 
 def roundTwoPostBond(branch, event, eventIndex, overEthicality):
-    if(MUTEX.getMutex()):
-        throw()
-    MUTEX.setMutex()
+    MUTEX.acquire()
     votePeriod = BRANCHES.getVotePeriod(branch)
     roundTwoBondCheckPreconditions()
     BACKSTOPS.setRoundTwoRefund(event, msg.value)
@@ -77,7 +78,7 @@ def roundTwoPostBond(branch, event, eventIndex, overEthicality):
     validEvent = (event != 0 and event == eventID)
     # if so, we're not in the final 48 hours or event isn't in this branch + votePeriod, or it's already been put into a backstop
     if(currentPeriod == currentPlus48Hr or !validEvent or BACKSTOPS.getRoundTwo(event) or EVENTS.getForked(event)):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(0)
     # pays money to cover resolution cost
     if(!send(BACKSTOPS, msg.value)):
@@ -116,15 +117,13 @@ def roundTwoPostBond(branch, event, eventIndex, overEthicality):
     EVENTS.setEthics(event, 0)
     if(overEthicality):
         BACKSTOPS.setDisputedOverEthics(event)
-    MUTEX.unsetMutex()
+    MUTEX.release()
     return(1)
 
 # Resolves a round 2 event scenario
 def roundTwoResolve(branch, event, eventIndex, sender):
     refund()
-    if(MUTEX.getMutex()):
-        throw()
-    MUTEX.setMutex()
+    MUTEX.acquire()
     if(!branch):
         throw()
     periodLength = BRANCHES.getPeriodLength(branch)
@@ -158,7 +157,7 @@ def roundTwoResolve(branch, event, eventIndex, sender):
     # same as original consensus and bond poster was wrong [or malicious]
     elif(votedOnAgain and !forked and roundTwoEventWithBondNotReturned):
         loseBond()
-    MUTEX.unsetMutex()
+    MUTEX.release()
     return(1)
 
 # Actually sets the outcome for a round 2 event
@@ -168,7 +167,7 @@ def resolve(branch, event):
     refund()
     self.controller.checkWhitelist(msg.sender)
     if(binary(event)):
-        RESOLVE.resolveBinary(event, EVENTS.getMarket(event, 0), branch, votePeriod)
+        BINARYRESOLVE.resolveBinary(event, EVENTS.getMarket(event, 0), branch, votePeriod)
         return(1)
     # scalar
     elif(scalar(event) or categorical(event)):
@@ -177,7 +176,7 @@ def resolve(branch, event):
         if(categorical(event)):
             fxpScaledMin = ONE
             fxpScaledMax = ONE * EVENTS.getNumOutcomes(event)
-        RESOLVE.resolveCategoricalOrScalar(fxpScaledMin, fxpScaledMax, event, EVENTS.getMarket(event, 0), branch, votePeriod)
+        NONBINARYRESOLVE.resolveCategoricalOrScalar(fxpScaledMin, fxpScaledMax, event, EVENTS.getMarket(event, 0), branch, votePeriod)
         return(1)
     # (should never be reached)
     else:
@@ -188,12 +187,12 @@ macro roundTwoBondCheckPreconditions():
     forkPeriod = BRANCHES.getForkPeriod(branch)
     # means an event was created prior to a fork and hasn't been moved after the fork yet
     if(!eventCreatedPriorToFork(eventID)):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(-1)
     if(noVotes()):
         return(-3)
     if(msg.value < 1000000 * tx.gasprice):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(-2)
 
 macro loseBond():

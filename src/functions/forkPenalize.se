@@ -49,15 +49,14 @@ data controller
     # -5: needed to collect fees last period which sets the before/after rep
     # -6: only should be called on fork child branch, not the parent
 def init():
-    self.controller = 0xC001D00D
+    self.controller = 0x0
 
 def penalizeOnForkedEvent(branch, event):
     refund()
-    if(MUTEX.getMutex()):
-        throw()
-    MUTEX.setMutex()
+    MUTEX.acquire()
     repBalance = REPORTING.getRepBalance(branch, msg.sender)
     lastPeriodVotedOn = BRANCHES.getVotePeriod(branch) - 1
+    lastPeriod = lastPeriodVotedOn
     periodLength = BRANCHES.getPeriodLength(branch)
     newRep = 0
     newAfterRep = EXPEVENTS.getAfterRep(branch, lastPeriodVotedOn, msg.sender)
@@ -78,30 +77,30 @@ def penalizeOnForkedEvent(branch, event):
     # once penalized for all events actually get rid of net rep lost
     if(numReportedOn == CONSENSUS.getPenalizedNum(branch, lastPeriodVotedOn, msg.sender)):
         sendRedistributedRepToBranch()
-    MUTEX.unsetMutex()
+    MUTEX.release()
     return(1)
 
 macro checkForkPenalizationPreconditions():
     if(repBalance < ONE):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(0)
     if((block.timestamp / periodLength - 2) != lastPeriodVotedOn):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(-1)
     atFirstHalfOfPeriod()
     # means event / fork isn't resolved
     if(!EVENTS.getForkedDone(event)):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(-3)
     if(CONSENSUS.getPenalizedUpTo(branch, msg.sender) == lastPeriodVotedOn):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(-4)
     if(!CONSENSUS.getRepCollected(branch, msg.sender, lastPeriodVotedOn - 1)):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(-5)
     branchIsParent = BRANCHES.getEventForkedOver(branch) == event
     if(branchIsParent):
-        MUTEX.unsetMutex()
+        MUTEX.release()
         return(-6)
 
 macro penalizeOrRewardReporter():
@@ -114,7 +113,7 @@ macro penalizeOrRewardReporter():
         CONSENSUS.increasePenalizedNum(branch, lastPeriodVotedOn, msg.sender, 1)
     if(!penalizedOnEvent and reportValue and outcome != 0):
         calculateRepChange(reportValue, ONE)
-        # handleEthicsAndBondRepRedistribution(numReportedOn)
+        handleEthicsAndBondRepRedistribution(numReportedOn)
         CONSENSUS.setPenalized(branch, lastPeriodVotedOn, msg.sender, event)
         CONSENSUS.increasePenalizedNum(branch, lastPeriodVotedOn, msg.sender, 1)
 

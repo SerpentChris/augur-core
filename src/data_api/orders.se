@@ -14,7 +14,7 @@ data bestOrder[][](bid, ask)
 data controller
 
 def init():
-    self.controller = 0xC001D00D
+    self.controller = 0x0
 
 def makeOrderHash(market, outcome, direction):
     refund()
@@ -31,6 +31,9 @@ def commitOrder(hash):
     self.orderCommits[msg.sender].hash = hash
     self.orderCommits[msg.sender].block = block.number
     return(1)
+
+def getInfo(sender):
+    return([self.orderCommits[sender].block, self.orderCommits[sender].hash, block.number]: arr)
 
 def checkHash(orderHash, sender):
     if(self.orderCommits[sender].hash != orderHash or block.number <= self.orderCommits[sender].block):
@@ -124,3 +127,6 @@ def getPrice(id):
 
 def getOrderOwner(id):
     return(self.orders[id].owner)
+
+def getType(id):
+    return(self.orders[id].type)
