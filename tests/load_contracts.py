@@ -198,7 +198,15 @@ def argtype(arg):
 
 
 def mk_signature(code):
-    """Generates the serpent-style signature for the code."""
+    """Experimental replacement for serpent.mk_signature.
+
+    Note: This function assumes that insets never introduce
+    new functions to the code, and also that macros don't 
+    introduce new return types to code. This means that this
+    function may be unable to determine if a single return-type
+    exists, though this isn't used by the ABI and the default
+    return type for this situation, '_', is used.
+    """
     path = 'main'
 
     # replicate serpent.mk_signature behavior: paths and strings of code are accepted.
@@ -516,7 +524,7 @@ class ContractLoader(object):
 
     def _compile(self, path):
         name = path_to_name(path)
-        contract = self._contracts[name] = self.state.abi_contract(path)
+        contract = self._contracts[name] = self._state.abi_contract(path)
         self._interfaces[name] = serpent.mk_full_signature(path)
         self._paths[name] = path
         self.controller.setValue(name.ljust(32, '\x00'), contract.address)
@@ -619,48 +627,54 @@ class ContractLoader(object):
         The latter may affect how you reference the contract in test code; A contract called buy&sell.se
         will only be accessible via contractLoader['buy&sell'], whereas a python friendly name like
         buyAndSell.se will allow you to do contractLoader.buyAndSell.
-
         """
         self._temp_dir = TempDirCopy(source_dir)
+        self._cleanups.append(self._temp_dir.cleanup)
         self._tester.rand.seed = RAND_SEED
         self._state = self._tester.state()
 
-        serpent_paths = td.find_files(SERPENT_EXT)
+        serpent_paths = self._temp_dir.find_files(SERPENT_EXT)
 
         for i in range(len(serpent_paths)):
             path = serpent_paths[i]
             if os.path.basename(path) == controller:
+                print('Compiling controller')
                 self._interfaces['controller'] = serpent.mk_full_signature(path)
                 self._paths['controller'] = path
-                controller = self._contracts['controller'] = state.abi_contract(path)
-                controller_addr = '0x' + hexlify(controller.address).decode()
+                self._contracts['controller'] = self._state.abi_contract(path)
+                controller_addr = '0x' + hexlify(self.controller.address).decode()
+                print('Updating externs')
                 update_externs(self._temp_dir.temp_source_dir, controller_addr)
                 del serpent_paths[i] # make sure we don't recompile this later
                 break
         else:
             raise LoadContractsError('Unable to find controller: {}', controller)
 
+        print('Compiling specials')
         for filename in specials:
-            for path in serpent_paths:
+            for i in range(len(serpent_paths)):
+                path = serpent_paths[i]
                 if os.path.basename(path) == filename:
-                    name = path_to_name(path)
-                    self._paths[name] = path
-                    self._interfaces[name] = serpent.mk_full_signature(path)
-                    contract = self._contracts[name] = state.abi_contract(path)
-                    controller.setValue(name.ljust(32, '\x00'), contract.address)
-                    controller.addToWhitelist(contract.address)
+                    print('    Compiling', filename)
+                    self._compile(path)
+                    del serpent_paths[i]
                     break
             else:
                 raise LoadContractsError('Special contract not found: {}', filename)
 
+        print('Compiling contracts')
         for path in serpent_paths:
-            name = path_to_name(path)
-            if name not in contracts:
-                self._interfaces[name] = serpent.mk_full_signature(path)
-                self._paths[name] = path
-                contract = self._contracts[name] = state.abi_contract(path)
-                controller.setValue(name.ljust(32, '\x00'), contract.address)
-                controller.addToWhitelist(contract.address)
+            print('    Compiling', path)
+            try:
+                self._compile(path)
+            except:
+                print('Error compiling path!')
+                print()
+                with open(path) as f:
+                    for i, line in enumerate(f):
+                        print(i + 1, line, sep=':', end='')
+                print()
+                raise
 
 
 def main():
