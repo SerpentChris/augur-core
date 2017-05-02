@@ -24,38 +24,19 @@ import os
 import os.path
 import errno
 import re
-from binascii import hexlify
+from binascii import hexlify, unhexlify
 import shutil
 import sys
-from serpent import mk_signature
 import tempfile
 import warnings
-import dill
+import ethereum
 import ethereum.tester
+import ethereum.transactions
+import ethereum.processblock
 import socket
 import select
-
-if (3, 0) <= sys.version_info:
-
-    def pretty_signature(path, name):
-        ugly_signature = mk_signature(path).decode()
-        extern_name = 'extern {}:'.format(name)
-        name_end = ugly_signature.find(':') + 1
-        signature = extern_name + ugly_signature[name_end:]
-        return signature
-
-    _hexlify = hexlify
-
-    def hexlify(binary):
-        return _hexlify(binary).decode()
-else:
-
-    def pretty_signature(path, name):
-        ugly_signature = mk_signature(path)
-        extern_name = 'extern {}:'.format(name)
-        name_end = ugly_signature.find(':') + 1
-        signature = extern_name + ugly_signature[name_end:]
-        return signature
+import json
+import serpent
 
 IPC_SOCK = None
 
@@ -65,6 +46,14 @@ CONTROLLER_V1 = re.compile('^(?P<indent>\s*)(?P<alias>\w+) = Controller.lookup\(
 CONTROLLER_V1_MACRO = re.compile('^macro Controller: (?P<address>0x[0-9a-fA-F]{1,40})$')
 CONTROLLER_INIT = re.compile('^(?P<indent>\s*)self.controller = 0x[0-9A-F]{1,40}')
 INDENT = re.compile('^$|^[#\s].*$')
+FUNCTION = re.compile('^def (.+)\((.*)\):$', re.M)
+RETURN = re.compile('^\s*[^#].+return\((.*)\).*$', re.M)
+IGNORE = ('any', 'init', 'shared')
+ARGSEP = re.compile(',\s?')
+TYPE_INFO = re.compile(
+    '^(u?int|u?fixed|address|bool|bytes|string|function)'
+    '(\d+x\d+|\d+)?'
+    '(\[\d*\])?$')
 
 STANDARD_EXTERNS = {
     'controller': 'extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]',
@@ -80,9 +69,10 @@ DEFAULT_RPCADDR = 'http://localhost:8545'
 DEFAULT_CONTROLLER = '0xDEADBEEF'
 VALID_ADDRESS = re.compile('^0x[0-9A-F]{1,40}$')
 
-
 SERPENT_EXT = '.se'
 MACRO_EXT = '.sem'
+
+RAND_SEED = 3**160  # the seed ethereum.tester uses for it's rand function
 
 
 class LoadContractsError(Exception):
@@ -148,6 +138,106 @@ class TempDirCopy(object):
     def original_path(self, path):
         """Returns the orignal path which the copy points to."""
         return path.replace(self.temp_source_dir, self.source_dir)
+
+
+def argtype(arg):
+    """Get the ABI type of a function argument."""
+    
+    # The default type in serpent is int256
+    if arg == '':
+        return ''
+    
+    if ':' not in arg:
+        return 'int256'
+
+    assert arg.count(':') == 1, 'Too many colons in arg!'
+
+    given_type = arg.split(':')[1].lstrip() # remove whitespace from e.g. 'x: int256'
+
+    # These are serpent sugar types
+    if given_type == 'arr':
+        return 'int256[]'
+    if given_type == 'str':
+        return 'bytes'
+
+    type_info = TYPE_INFO.match(given_type)
+
+    assert type_info, 'Bad type! {}'.format(given_type)
+
+    base, size, array = type_info.groups()
+
+    if base in ('address', 'bool', 'function', 'string'):
+        assert size is None
+        return given_type
+
+    if base == 'bytes':
+        if size:
+            assert 0 < int(size) <= 32, 'Bad size for fixed bytes type: {}'.format(given_type)
+        return given_type
+
+    if base in ('int', 'uint'):
+        if size:
+            assert 0 < int(size) <= 256, 'int size too large: {}'.format(given_type)
+            assert int(size)%8 == 0, 'int size not a multiple of 8: {}'.format(given_type)
+        else:
+            size = '256'
+
+    if base in ('ufixed', 'fixed'):
+        if size:
+            errmsg = 'fixedpoint type has improper size! {}'.format(given_type)
+            assert 'x' in size, errmsg
+            m, n = map(int, size.split('x'))
+            assert m%8==0, errmsg
+            assert n%8==0, errmsg
+            assert 0 < m+n <= 256, errmsg
+        else:
+            size = '128x128'
+
+    if array is None:
+            array = ''
+
+    return base + size + array
+
+
+def mk_signature(code):
+    """Generates the serpent-style signature for the code."""
+    path = 'main'
+
+    # replicate serpent.mk_signature behavior: paths and strings of code are accepted.
+    if os.path.isfile(code):
+        path = code
+        with open(path) as f:
+            code = f.read()
+
+    func_matches = list(FUNCTION.finditer(code))
+    funcs = []
+    l = len(func_matches)
+    for i, match in enumerate(func_matches):
+        name, args = match.groups()
+        if name not in IGNORE:
+            if i < l - 1:
+                returns = list(RETURN.finditer(code, match.start(), func_matches[i + 1].start()))
+            else:
+                returns = list(RETURN.finditer(code, match.start()))
+
+            return_type = '_'
+            if len(returns) > 0:
+                types = [argtype(m.group(1)) for m in returns]
+                if all(t == types[0] for t in types):
+                    return_type = types[0]
+
+            cannonical_types = ','.join(map(argtype, ARGSEP.split(args)))
+            funcs.append(name + ':[' + cannonical_types + ']:' + return_type)
+    return 'extern {}: [{}]'.format(path, ', '.join(funcs))
+
+
+def pretty_signature(code, name):
+    """Makes a Serpent style signature for the code, starting with 'extern name'."""
+    ugly_signature = mk_signature(code)
+    extern_name = 'extern {}'.format(name)
+    name_end = ugly_signature.find(':')
+    signature = extern_name + ugly_signature[name_end:]
+    return signature
 
 
 def strip_license(code_lines):
@@ -391,135 +481,187 @@ class ContractLoader(object):
     """A class which updates and compiles Serpent code via ethereum.tester.state.
 
     Examples:
-    contracts = ContractLoader('src', 'controller.se', ['mutex.se', 'cash.se', 'repContract.se'], 'path/to/save/compiled/contracts', 0)
-    final parameter in contract loader is whether to recompile the contracts or not
+    # Using load_from_source
+    contracts = ContractLoader()
+    contracts.load_from_source('src', 'controller.se', ['mutex.se', 'cash.se', 'repContract.se'])
+    # or using load_from_save
+    contract.load_from_save('save.json')
     print(contracts.foo.echo('lol'))
     print(contracts['bar'].bar())
     contracts.cleanup()
+    contracts.save('new_save.json')
     """
-    def __init__(self, source_dir, controller, special, compiled_directory=None, recompile=0):
-        self.__state = ethereum.tester.state()
-        self.__tester = ethereum.tester
-        ethereum.tester.gas_limit = 4100000
-        self.__contracts = {}
-        self.__temp_dir = TempDirCopy(source_dir)
-        self.__source_dir = source_dir
-        self.__compiled_directory = compiled_directory
-
-        serpent_files = self.__temp_dir.find_files(SERPENT_EXT)
-
-        if(compiled_directory != None and os.path.isfile(compiled_directory+'contracts.dill') == True):
-            dill_file = open(compiled_directory+'contracts.dill', 'rb')
-            self.__contracts = dill.load(dill_file)
-            dill_file.close()
-            print('Contract loading successful')
-
-        if(recompile or os.path.isfile(compiled_directory+'contracts.dill') == False):
-            controller_file = __find_file_by_name(serpent_files, controller)
-            if controller_file == None:
-                raise LoadContractsError('Controller not found!')
-
-            print('Creating controller..')
-            self.__contracts['controller'] = self.__state.abi_contract(controller_file)
-            controller_addr = '0x' + hexlify(self.__contracts['controller'].address)
-            assert len(controller_addr) == 42
-            print('Updating externs...')
-            update_externs(self.__temp_dir.temp_source_dir, controller_addr)
-            print('Finished.')
-            self.__state.mine()
-
-            for contract_name in special:
-                contract_file = self.__find_file_by_name(serpent_files, contract_name)
-                if contract_file == None:
-                    raise LoadContractsError('{} not found!', contract_name)
-
-                name = path_to_name(contract_file)
-                print(name)
-                self.__contracts[name] = self.__state.abi_contract(contract_file)
-                address = self.__contracts[name].address
-                self.controller.setValue(name.ljust(32, '\x00'), address)
-                self.controller.addToWhitelist(address)
-                self.__state.mine()
-                print('Contract creation successful:', name)
-
-            for file in serpent_files:
-                name = path_to_name(file)
-
-                try:
-                    print(name)
-                    self.__contracts[name] = self.__state.abi_contract(file)
-                except Exception as exc:
-                    with open(file) as f:
-                        code = f.read()
-                    raise LoadContractsError(
-                        'Error compiling {name}:\n\n{code}',
-                        name=name,
-                        code=code)
-                else:
-                    print('Contract creation successful:', name)
-
-                self.controller.setValue(name.ljust(32, '\x00'), self.__contracts[name].address)
-                self.controller.addToWhitelist(self.__contracts[name].address)
-
-            if(compiled_directory != None):
-                output = open(compiled_directory+'contracts.dill', 'wb')
-                self.__contracts['state'] = self.__state
-                dill.dump(self.__contracts, output)
-                output.close()
+    def __init__(self):
+        self._state = None
+        self._interfaces = {}
+        self._cleanups = []
+        self._tester = ethereum.tester
+        self._tester.gas_limit = 4100000
+        self._contracts = {}
+        self._paths = {}
+        self._temp_dir = None
 
     def __getattr__(self, name):
         """Use it like a namedtuple!"""
         try:
-            return self.__contracts[name]
+            return self._contracts[name]
         except KeyError:
             raise AttributeError()
 
     def __getitem__(self, name):
         """Use it like a dict!"""
         try:
-            return self.__contracts[name]
+            return self._contracts[name]
         except KeyError:
             raise LoadContractsError('{!r} is not a contract!', name)
 
-    def cleanup(self):
-        """Deletes temporary files."""
-        self.__temp_dir.cleanup()
+    def _compile(self, path):
+        name = path_to_name(path)
+        contract = self._contracts[name] = self.state.abi_contract(path)
+        self._interfaces[name] = serpent.mk_full_signature(path)
+        self._paths[name] = path
+        self.controller.setValue(name.ljust(32, '\x00'), contract.address)
+        self.controller.addToWhitelist(contract.address)
 
-    def __del__(self):
-        """ContractLoaders try to clean up after themselves."""
-        self.cleanup()
+    def compile(self, contract):
+        """Compiles the contract and creates a new ABIContract for it.
 
-    def recompile(self, name):
-        """Gets the latest copy of the code from the source path, recompiles, and updates controller."""
-        self.__temp_dir = TempDirCopy(self.__source_dir)
-        for file in self.__temp_dir.find_files(SERPENT_EXT):
-            if path_to_name(file) == name:
-                break
+        The argument may be either the name of a contract already compiled,
+        or it can be a path. If the argument refers to a contract that is already
+        compiled, the copy of it's source is updated in the temporary directory,
+        and the old contract is replaced by the new one. If the contract is new,
+        it's code is copied to the temporary directory and a new contract is created.
+        """
+        temp_dir = self._temp_dir
 
-        og_path = self.__temp_dir.original_path(file)
-        os.remove(file)
-        shutil.copy(og_path, file)
-        update_externs(self.__temp_dir.temp_source_dir, self.get_address('controller'))
-        self.__contracts[name] = self.__state.abi_contract(file)
-        self.controller.setValue(name.ljust(32, '\x00'), self.__contracts[name].address)
-        self.controller.addToWhitelist(self.__contracts[name].address)
-        self.__state.mine()
-        if(self.__compiled_directory != None):
-            output = open(self.__compiled_directory+'contracts.dill', 'wb')
-            self.__contracts['state'] = self.__state
-            dill.dump(self.__contracts, output)
-            output.close()
+        if contract in self._paths:
+            # this is the name of a contract
+            path_in_temp_dir = self._paths[contract]
+            source_path = path_in_temp_dir.replace(temp_dir.temp_source_dir, temp_dir.source_dir, 1)
 
-    def get_address(self, name):
-        """Hex-encoded address of the contract."""
-        return '0x' + hexlify(self.__contracts[name].address)
-
-    def __find_file_by_name(self, files, file_name):
-        for file in files:
-            if os.path.basename(file) != file_name:
-                return file
+        if os.path.isfile(path):
+            source_path = os.path.abspath(path)
+            assert path.startswith(temp_dir.source_dir), 'path not in the source directory!'
+            path_in_temp_dir = path.replace(temp_dir.source_dir, temp_dir.temp_source_dir, 1)
         else:
-            return None
+            raise LoadContractsError('The contract is not a known contract, or it\'s path is outside the source directory!')
+
+        if os.path.isfile(path_in_temp_dir):
+            os.remove(path_in_temp_dir)
+            
+        shutil.copy2(source_path, path_in_temp_dir)
+        update_externs(temp_dir.temp_source_dir, '0x' + hexlify(self.controller.address).decode())
+        self._compile(path_in_temp_dir)
+
+    def save(self, path):
+        """Saves state and contract info to a path.
+        
+        Note: If the path already exists, it gets overwritten.
+        Also be aware that if you haven't called state.mine(),
+        any pending transactions have not been committed to the
+        state trie and so they won't be included in the save.
+        """
+        path = os.path.abspath(path)
+
+        save = {'blocks': [], 'contracts': {}}
+
+        # the last block in the state.blocks list has not been committed, so it's skipped.
+        for block in self._state.blocks[:-1]:
+            save['blocks'].append(hexlify(rlp.encode(block)).decode())
+
+        for name in self._contracts:
+            contract = self._contracts[name]
+            save['contracts'][name] = {
+                'address': hexlify(contract.address).decode(),
+                'interface': self.__interfaces[name],
+                'path': self._paths[name],
+                }
+
+        save['source'] = os.path.abspath(self._temp_dir.source_dir)
+
+        with open(path, 'w') as f:
+            json.dump(save, f)
+
+    def load_from_save(self, save_path):
+        """Loads contracts from a saved state."""
+        with open(save_path) as f:
+            save = json.load(f)
+
+        self._temp_dir = TempDirCopy(save['source'])
+        self._tester.rand.seed = RAND_SEED
+        state = self._state = self._tester.state()
+
+        for i, block in enumerate(save['blocks']):
+            raw_block = rlp.decode(unhexlify(block))
+            # At the low level, a block is a list containing three elements.
+            # the first element is the block header, which is itself a list of stuff.
+            # the second element is a list of transactions.
+            for j, raw_tx in enumerate(raw_block[1]):
+                tx = rlp.decode(rlp.encode(raw_tx), ethereum.transactions.Transaction)
+                success, output = ethereum.processblock.apply_transaction(state.block, tx)
+                if not success:
+                    raise LoadContractsError('Tx #{} in block {} is invalid!', j, i)
+            state.mine()
+
+        for name in save['contracts']:
+            address = save['contracts'][name]['address']
+            interface = save['contracts'][name]['interace']
+            path = save['contracts'][name]['path']
+            raw_address = unhexlify(address)
+            self._contracts[name] = ethereum.tester.ABIContract(state, interface, raw_address)
+            self._interfaces[name] = interface
+            self._paths[name] = path
+
+    def load_from_source(self, source_dir, controller, specials):
+        """Loads contracts from a source directory with a new state.
+
+        Note: The controller contract is called "controller" without regards to its filename,
+        but all the other contracts are referenced by their filename minus the serpent extension.
+        The latter may affect how you reference the contract in test code; A contract called buy&sell.se
+        will only be accessible via contractLoader['buy&sell'], whereas a python friendly name like
+        buyAndSell.se will allow you to do contractLoader.buyAndSell.
+
+        """
+        self._temp_dir = TempDirCopy(source_dir)
+        self._tester.rand.seed = RAND_SEED
+        self._state = self._tester.state()
+
+        serpent_paths = td.find_files(SERPENT_EXT)
+
+        for i in range(len(serpent_paths)):
+            path = serpent_paths[i]
+            if os.path.basename(path) == controller:
+                self._interfaces['controller'] = serpent.mk_full_signature(path)
+                self._paths['controller'] = path
+                controller = self._contracts['controller'] = state.abi_contract(path)
+                controller_addr = '0x' + hexlify(controller.address).decode()
+                update_externs(self._temp_dir.temp_source_dir, controller_addr)
+                del serpent_paths[i] # make sure we don't recompile this later
+                break
+        else:
+            raise LoadContractsError('Unable to find controller: {}', controller)
+
+        for filename in specials:
+            for path in serpent_paths:
+                if os.path.basename(path) == filename:
+                    name = path_to_name(path)
+                    self._paths[name] = path
+                    self._interfaces[name] = serpent.mk_full_signature(path)
+                    contract = self._contracts[name] = state.abi_contract(path)
+                    controller.setValue(name.ljust(32, '\x00'), contract.address)
+                    controller.addToWhitelist(contract.address)
+                    break
+            else:
+                raise LoadContractsError('Special contract not found: {}', filename)
+
+        for path in serpent_paths:
+            name = path_to_name(path)
+            if name not in contracts:
+                self._interfaces[name] = serpent.mk_full_signature(path)
+                self._paths[name] = path
+                contract = self._contracts[name] = state.abi_contract(path)
+                controller.setValue(name.ljust(32, '\x00'), contract.address)
+                controller.addToWhitelist(contract.address)
 
 
 def main():
