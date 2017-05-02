@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 inset('../macros/refund.sem')
 
 macro fxExp2Small($x):
@@ -107,3 +109,14 @@ def fxExp(x):
 def fxLog(x):
     refund()
     return(fxLog(x))
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

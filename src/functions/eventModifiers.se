@@ -1,22 +1,4 @@
-# This software (Augur) allows buying and selling event outcomes in ethereum
-# Copyright (C) 2015 Forecast Foundation OU
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful, #    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# Any questions please contact joey@augur.net
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
@@ -59,9 +41,6 @@ inset('../macros/eventHelpers.sem')
 
 data controller
 
-event marketCreated(market)
-event tradingFeeUpdated(market, fxpTradingFee)
-
 macro POINT_ZERO_THREE: 553402322211286528
 macro COST_PER_REPORTER: 3500000
 macro COST_FOR_EVENT_REPORT_CALCULATION: 500000
@@ -72,13 +51,6 @@ macro SECONDS_PER_YEAR: 31557600
 macro 10_PERCENT_RATE: 100000000000000000
 # may want to reconfirm this again
 macro COST_FOR_MARKET_RESOLUTION: 1000000
-
-macro checkSubcurrencyIsValid($contract):
-    allowance = $contract.allowance(msg.sender, self)
-    balance = $contract.balanceOf(self)
-    transfer = $contract.transfer(msg.sender, 0)
-    transferFrom = $contract.transferFrom(self, msg.sender, 0)
-    approve = $contract.approve(self, 0)
 
 macro checkForkResolveContractIsValid($contract):
     resolve = $contract.resolveFork(1)
@@ -197,10 +169,10 @@ def addFees(market, fxpAmount):
     if(notVotingOnYet):
         currency = INFO.getCurrency(market)
         if(!currency.transferFrom(msg.sender, BRANCHES.getBranchWallet(branch, currency), amount)):
-            throw()
+            ~invalid()
         amountInWei = safeFxpMul(fxpAmount, BRANCHES.getCurrencyRate(branch, currency))
         if(!amountInWei):
-            throw()
+            ~invalid()
         MARKETS.addFees(market, amountInWei)
         EXPEVENTS.adjustPeriodFeeValue(branch, MARKETS.getTradingPeriod(market), amountInWei)
         return(1)
@@ -211,16 +183,27 @@ macro payExtraBond():
     baseReporters = BRANCHES.getBaseReporters(branch)
     amount = safeFxpDiv(5*COST_PER_REPORTER * baseReporters * tx.gasprice, WEI_TO_ETH)
     if(!currency.transferFrom(msg.sender, INFO.getWallet(event), amount)):
-        throw()
+        ~invalid()
     EVENTS.setExtraBond(event, amount)
     EVENTS.setExtraBondPoster(event, msg.sender)
 
 macro addEvent():
     # cost for calculating num. of reports for an event
     if(!send(EXPEVENTS, COST_FOR_EVENT_REPORT_CALCULATION * tx.gasprice)):
-        throw()
+        ~invalid()
     forkPeriod = BRANCHES.getForkPeriod(branch)
     afterFork = 0
     if(futurePeriod == (forkPeriod + 1) or futurePeriod == (forkPeriod + 2)):
         afterFork = 1
     EXPEVENTS.addEvent(branch, futurePeriod, event, COST_FOR_EVENT_REPORT_CALCULATION * tx.gasprice, currency, wallet, afterFork)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

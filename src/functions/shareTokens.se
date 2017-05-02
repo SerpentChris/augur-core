@@ -1,22 +1,4 @@
-# This software (Augur) allows buying and selling event outcomes in ethereum
-# Copyright (C) 2015 Forecast Foundation OU
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful, #    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# Any questions please contact joey@augur.net
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
@@ -55,9 +37,9 @@ def transfer(to: address, value: uint256):
     self.controller.checkWhitelist(msg.sender)
     senderBalance = self.accounts[msg.sender].balance
     if(senderBalance < value):
-        throw()
+        ~invalid()
     if(!safeToSubtract(senderBalance, value) or !safeToAdd(self.accounts[to].balance, value)):
-        throw()
+        ~invalid()
     # Update balances
     self.accounts[msg.sender].balance -= value
     self.accounts[to].balance += value
@@ -73,9 +55,9 @@ def transferFrom(from: address, to: address, value: uint256):
     self.controller.checkWhitelist(msg.sender)
     senderBalance = self.accounts[from].balance
     if(senderBalance < value or value > self.accounts[from].spenders[msg.sender].maxValue):
-        throw()
+        ~invalid()
     if(!safeToSubtract(senderBalance, value) or !safeToAdd(self.accounts[to].balance, value)):
-        throw()
+        ~invalid()
     self.accounts[from].spenders[msg.sender].maxValue -= value
     # Update balances
     self.accounts[from].balance -= value
@@ -121,7 +103,7 @@ def getSymbol():
 def changeTokens(trader, amount):
     self.controller.checkWhitelist(msg.sender)
     if(self.accounts[trader].balance + amount < 0):
-        throw()
+        ~invalid()
     self.accounts[trader].balance += amount
     return(1)
 
@@ -136,3 +118,14 @@ macro safeToAdd($a, $b):
 
 macro safeToSubtract($a, $b):
     ($b <= $a && (($a - $b) <= $a))
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

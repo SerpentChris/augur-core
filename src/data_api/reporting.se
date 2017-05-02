@@ -1,22 +1,4 @@
-# This software (Augur) allows buying and selling event outcomes in ethereum
-# Copyright (C) 2015 Forecast Foundation OU
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful, #    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# Any questions please contact joey@augur.net
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
@@ -84,7 +66,7 @@ def getRepByIndex(branch, repIndex):
 def getRepBalance(branch, address):
     repIndex = self.Reporting[branch].repIDtoIndex[address]
     if(!repIndex and self.Reporting[branch].reputation[repIndex].reporterID != address):
-        throw()
+        return(0)
     return(self.Reporting[branch].reputation[repIndex].repValue)
 
 def getDormantRepByIndex(branch, repIndex):
@@ -149,9 +131,8 @@ def getNumberReporters(branch):
 
 def repIDToIndex(branch, repID):
     repIndex = self.Reporting[branch].repIDtoIndex[repID]
-    # means repID didn't matchup with 0 index reporterID
-    if(!repIndex and self.Reporting[branch].reputation[repIndex].reporterID != repID):
-        throw()
+    if(self.Reporting[branch].reputation[repIndex].reporterID != repID):
+        ~invalid()
     return(repIndex)
 
 def setInitialReporters(branch):
@@ -211,11 +192,13 @@ def claimInitialRepFromRepContract():
     sender = msg.sender
     dormantRep = REPCONTRACT.balanceOf(sender)
     if(!dormantRep):
-        throw()
+        ~invalid()
     if(dormantRep != REPCONTRACT.allowance(sender, self)):
-        throw()
+        ~invalid()
     if(!REPCONTRACT.transferFrom(sender, 0x0000000000000000000000000000000000000000, dormantRep)):
-        throw()
+        ~invalid()
+    if(self.Reporting[branch].repIDtoIndex[sender]):
+        ~invalid()
     reporterIndex = self.Reporting[branch].numberReporters
     self.Reporting[branch].repIDtoIndex[sender] = reporterIndex
     self.Reporting[branch].reputation[reporterIndex].reporterID = sender
@@ -224,3 +207,14 @@ def claimInitialRepFromRepContract():
     self.Reporting[branch].totalRep += dormantRep
     self.Reporting[branch].numberReporters += 1
     return(1)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

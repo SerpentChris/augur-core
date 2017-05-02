@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
 EVENTS = self.controller.lookup('events')
@@ -36,3 +38,14 @@ def determineWinningOutcomes(event):
     else:
         winningOutcomes[0] += outcome
     return(winningOutcomes: arr)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

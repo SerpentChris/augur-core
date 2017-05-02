@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
 inset('../macros/refund.sem')
@@ -62,3 +64,14 @@ def getTopicPopularity(branch, topic):
 
 def getNumTopicsInBranch(branch):
     return(self.Topics[branch].numTopics)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

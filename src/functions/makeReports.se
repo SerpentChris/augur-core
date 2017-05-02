@@ -1,22 +1,4 @@
-# This software (Augur) allows buying and selling event outcomes in ethereum
-# Copyright (C) 2015 Forecast Foundation OU
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful, #    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# Any questions please contact joey@augur.net
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
 
 BRANCHES = self.controller.lookup('branches')
 extern branches: [addCurrency:[int256,int256,int256,int256]:int256, addMarketToBranch:[int256,int256]:int256, disableCurrency:[int256,int256]:int256, getBaseReporters:[int256]:int256, getBranchByNum:[int256]:int256, getBranchCurrency:[int256,int256]:int256, getBranchWallet:[int256,int256]:int256, getBranches:[]:int256[], getBranchesStartingAt:[int256]:int256[], getCreationDate:[int256]:int256, getCurrencyActive:[int256,int256]:int256, getCurrencyByContract:[int256,int256]:int256, getCurrencyRate:[int256,int256]:int256, getEventForkedOver:[int256]:int256, getForkPeriod:[int256]:int256, getForkTime:[int256]:int256, getInitialBalance:[int256,int256,int256]:int256, getMarketIDsInBranch:[int256,int256,int256]:int256[], getMinTradingFee:[int256]:int256, getMostRecentChild:[int256]:int256, getNumBranches:[]:int256, getNumCurrencies:[int256]:int256, getNumMarketsBranch:[int256]:int256, getOracleOnly:[int256]:int256, getParent:[int256]:int256, getParentPeriod:[int256]:int256, getPeriodLength:[int256]:int256, getVotePeriod:[int256]:int256, incrementPeriod:[int256]:int256, initializeBranch:[int256,int256,int256,int256,int256,int256,int256,int256,int256]:int256, reactivateCurrency:[int256,int256]:int256, removeLastCurrency:[int256]:int256, replaceCurrency:[int256,int256,int256,int256,int256]:int256, setBaseReporters:[int256,int256]:int256, setEventForkedOver:[int256,int256]:int256, setForkPeriod:[int256]:int256, setInitialBalance:[int256,int256,int256,int256]:int256, setMostRecentChild:[int256,int256]:int256, updateCurrencyRate:[int256,int256,int256,int256]:int256, updateNumCurrencies:[int256,int256]:int256]
@@ -85,13 +67,15 @@ def init():
     # 0: reporter doesn't exist or has <1 rep
     # -1: has already reported
     # -2: not in second half of period
-    # -3: hash doesn't match
     # -4: bad fxpReport
     # -5: invalid fxpEthics
     # -6: already resolved
     # -7: <48 hr left in period, too late to fxpReport, able to put up readj. bonds though
     # -8: fees couldn't be collected
-def submitReport(event, salt, fxpReport, fxpEthics):
+    # -9: invalid event
+    # -10: not caught up on penalizations [>1 period behind] and auto catchup failed
+    # -11: not able to fxpReport on this event
+def submitReport(event, fxpReport, fxpEthics):
     refund()
     MUTEX.acquire()
 
@@ -99,6 +83,21 @@ def submitReport(event, salt, fxpReport, fxpEthics):
     balance = REPORTING.getRepBalance(branch, msg.sender)
     votePeriod = BRANCHES.getVotePeriod(branch)
     periodLength = BRANCHES.getPeriodLength(branch)
+    lastPeriodPenalized = CONSENSUS.getPenalizedUpTo(branch, msg.sender)
+    lastPeriod = votePeriod - 1
+    delta = lastPeriod - lastPeriodPenalized
+    eventIndex = EXPEVENTS.getEventIndex(branch, votePeriod, event)
+    eventID = EXPEVENTS.getEvent(branch, votePeriod, eventIndex)
+    reportingThresholdForUser = calculateReportingThreshold()
+    # do abs to ensure pos. and between 0 and 1
+    hash = sha3([msg.sender, event], items = 2)
+    shaHash = abs(hash) / ONE
+    # max value 10^54
+    shaHash = shaHash / 57896044618658091106304 * ONE
+    # shaHash must be <= to the threshold for that user to be able to fxpReport on the given event
+    if(shaHash > reportingThresholdForUser):
+        MUTEX.release()
+        logReturn(makeReportsLogReturn, -11)
     forkedOverThisEvent = 0
     roundTwo = BACKSTOPS.getRoundTwo(event)
     weight = 1
@@ -110,17 +109,18 @@ def submitReport(event, salt, fxpReport, fxpEthics):
     MUTEX.release()
     logReturn(makeReportsLogReturn, 1)
 
-def makeHash(salt, fxpReport, event, sender, ethics):
-    hashInfo = array(5)
-    hashInfo[0] = sender
-    hashInfo[1] = salt
-    hashInfo[2] = fxpReport
-    hashInfo[3] = event
-    hashInfo[4] = ethics
-    reportHash = sha3(hashInfo, chars = 32 * len(hashInfo))
-    return(reportHash)
+### Helper macros and functions:
 
 macro checkSubmitReportPreconditions():
+    if(!eventIndex and (!event or eventID != event)):
+        MUTEX.release()
+        logReturn(makeReportsLogReturn, -9)
+    if(delta >= 1 and CATCHUP.penalizationCatchup(branch, msg.sender) != 1):
+        MUTEX.release()
+        logReturn(makeReportsLogReturn, -10)
+    # if first fxpReport of period, num events not set
+    if(!EXPEVENTS.getNumEventsToReportOn(branch, votePeriod)):
+        EXPEVENTS.setNumEventsToReportOn(branch)
     if(BRANCHES.getEventForkedOver(BRANCHES.getParent(branch)) == event):
         forkedOverThisEvent = 1
     if(roundTwo or forkedOverThisEvent):
@@ -132,10 +132,6 @@ macro checkSubmitReportPreconditions():
         MUTEX.release()
         logReturn(makeReportsLogReturn, -1)
     atSecondHalfOfPeriod()
-    realHash = EXPEVENTS.getReportHash(branch, votePeriod, msg.sender, event)
-    if(self.makeHash(salt, fxpReport, event, msg.sender, fxpEthics) != realHash or !realHash):
-        MUTEX.release()
-        logReturn(makeReportsLogReturn, -3)
     if(fxpEthics != ONE and fxpEthics != 0):
         MUTEX.release()
         logReturn(makeReportsLogReturn, -5)
@@ -188,3 +184,28 @@ macro coverGasCostIfPossible():
         gasCostInWei = safeFxpDiv(GAS_SUBSIDY * tx.gasprice, WEI_TO_ETH)
         gasCostInSubcurrency = safeFxpDiv(gasCostInWei, BRANCHES.getCurrencyRate(branch, INFO.getCurrency(market)))
         INFO.getWallet(market).transfer(msg.sender, gasCostInSubcurrency)
+
+macro calculateReportingThreshold():
+    threshold = 0
+    if(eventCreatedPriorToFork(event)):
+        threshold = 0
+    elif(EXPEVENTS.getRequired(event, votePeriod, branch) or EVENTS.getReportingThreshold(event)):
+        threshold = MAX_REPORT_THRESHOLD
+    # if number of reports event should have hasn't been calculated yet do it
+    elif(!EXPEVENTS.getLesserReportNum(branch, votePeriod, event)):
+        THRESHOLD.calculateReportTargetForEvent(branch, event, votePeriod, msg.sender)
+        threshold = THRESHOLD.calculateReportingThreshold(branch, event, votePeriod, msg.sender)
+    else:
+        threshold = THRESHOLD.calculateReportingThreshold(branch, event, votePeriod, msg.sender)
+    threshold
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

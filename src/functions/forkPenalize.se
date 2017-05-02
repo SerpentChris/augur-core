@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 ### Handles reporter penalization on forked events
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
@@ -22,6 +24,9 @@ extern consensusData: [decreaseDenominator:[int256,int256,int256]:int256, doRefu
 
 MUTEX = self.controller.lookup('mutex')
 extern mutex: [acquire:[]:int256, release:[]:int256]
+
+REPCHANGELIBRARY = self.controller.lookup('repChangeLib')
+extern repChangeLib: [calculateRepChange:[int256,int256,int256,int256,int256,int256,int256]:int256, setController:[int256]:int256, suicideFunds:[int256]:_]
 
 inset('../macros/refund.sem')
 inset('../macros/eventHelpers.sem')
@@ -112,7 +117,7 @@ macro penalizeOrRewardReporter():
         CONSENSUS.setPenalized(branch, lastPeriodVotedOn, msg.sender, event)
         CONSENSUS.increasePenalizedNum(branch, lastPeriodVotedOn, msg.sender, 1)
     if(!penalizedOnEvent and reportValue and outcome != 0):
-        calculateRepChange(reportValue, ONE)
+        repChange = REPCHANGELIBRARY.calculateRepChange(reportValue, ONE, oldRep, p, event, outcome, numReportedOn, call = delegate)
         handleEthicsAndBondRepRedistribution(numReportedOn)
         CONSENSUS.setPenalized(branch, lastPeriodVotedOn, msg.sender, event)
         CONSENSUS.increasePenalizedNum(branch, lastPeriodVotedOn, msg.sender, 1)
@@ -152,3 +157,14 @@ macro handleEthicsAndBondRepRedistribution($numReportedOn):
         newAfterRep = EXPEVENTS.getAfterRep(branch, lastPeriodVotedOn, msg.sender) + repChange
         EXPEVENTS.setAfterRep(branch, lastPeriodVotedOn, newAfterRep, msg.sender)
     repBalance = REPORTING.getRepBalance(branch, msg.sender)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

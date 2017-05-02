@@ -1,22 +1,4 @@
-# This software (Augur) allows buying and selling event outcomes in ethereum
-# Copyright (C) 2015 Forecast Foundation OU
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful, #    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# Any questions please contact joey@augur.net
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
@@ -59,8 +41,7 @@ inset('../macros/eventHelpers.sem')
 
 data controller
 
-event marketCreated(market)
-event tradingFeeUpdated(market, fxpTradingFee)
+event tradingFeeUpdated(sender: indexed, branch: indexed, marketID: indexed, fxpTradingFee, timestamp)
 
 macro POINT_ZERO_THREE: 553402322211286528
 macro COST_PER_REPORTER: 3500000
@@ -72,13 +53,6 @@ macro SECONDS_PER_YEAR: 31557600
 macro 10_PERCENT_RATE: 100000000000000000
 # may want to reconfirm this again
 macro COST_FOR_MARKET_RESOLUTION: 1000000
-
-macro checkSubcurrencyIsValid($contract):
-    allowance = $contract.allowance(msg.sender, self)
-    balance = $contract.balanceOf(self)
-    transfer = $contract.transfer(msg.sender, 0)
-    transferFrom = $contract.transferFrom(self, msg.sender, 0)
-    approve = $contract.approve(self, 0)
 
 macro checkForkResolveContractIsValid($contract):
     resolve = $contract.resolveFork(1)
@@ -132,8 +106,8 @@ def updateTradingFee(market, fxpTradingFee):
         MUTEX.release()
         return(-2)
     if(!currency.transferFrom(msg.sender, BRANCHES.getBranchWallet(branch, currency), newCreationFee - oldCreationFee) or !MARKETS.setTradingFee(market, fxpTradingFee)):
-        throw()
-    log(type = tradingFeeUpdated, market, fxpTradingFee)
+        ~invalid()
+    log(type = tradingFeeUpdated, msg.sender, branch, market, fxpTradingFee, block.timestamp)
     MUTEX.release()
     return(1)
 
@@ -163,10 +137,10 @@ def pushMarketForward(branch, market):
     if(MARKETS.getBranch(market) != branch):
         MUTEX.release()
         return(0)
-    event = MARKETS.getMarketEvent(market, 0)
+    event = MARKETS.getMarketEvent(market)
     if(eventCreatedPriorToFork(event)):
         return(-1)
-    event = MARKETS.getMarketEvent(market, 0)
+    event = MARKETS.getMarketEvent(market)
     expiration = EVENTS.getExpiration(event)
     beingReportedOnNow = (expiration / periodLength == block.timestamp / periodLength)
     alreadyPushedForward = EVENTS.getRejectedPeriod(event) or expiration != EVENTS.getOriginalExpiration(event)
@@ -193,6 +167,17 @@ def pushMarketForward(branch, market):
     bond = safeFxpMul(MARKETS.getTradingFee(market), MARKETS.getTotalSharesPurchased(market)) / 2
     payEarlyResolutionBond = INFO.getCurrency(market).transferFrom(msg.sender, INFO.getWallet(market), bond)
     if(!payEarlyResolutionBond or !EVENTS.setEarlyResolutionBond(event, bond)):
-        throw()
+        ~invalid()
     MUTEX.release()
     return(1)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

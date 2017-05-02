@@ -29,7 +29,10 @@ import shutil
 import sys
 import tempfile
 import warnings
+<<<<<<< HEAD
 import ethereum
+=======
+>>>>>>> upstream/develop
 import ethereum.tester
 import ethereum.transactions
 import ethereum.processblock
@@ -491,6 +494,7 @@ class ContractLoader(object):
     contracts.cleanup()
     contracts.save('new_save.json')
     """
+
     def __init__(self):
         self._state = None
         self._interfaces = {}

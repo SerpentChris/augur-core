@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 ### This pays out on binary or categorical markets
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
@@ -53,6 +55,17 @@ macro transferMoney():
     fee = safeFxpMul(MARKETS.getTradingFee(market), value)
     if(value != 0 && fee != 0):
         if(!INFO.getWallet(market).transfer(BRANCHES.getBranchWallet(branch, currency), safeDiv(fee, 2)) or !INFO.getWallet(market).transfer(INFO.getCreator(market), safeDiv(fee, 2))):
-            throw()
+            ~invalid()
         if(!INFO.getWallet(market).transfer(sender, safeSub(value, fee))):
-            throw()
+            ~invalid()
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

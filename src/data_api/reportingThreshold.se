@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 ### Deals with whether a reporter can report on a given event
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
@@ -72,7 +74,7 @@ def calculateReportTargetForEvent(branch, event, votePeriod, sender):
         return(0)
     atFirstHalfOfPeriod()
     if(currentVotePeriod < votePeriod):
-        throw()
+        ~invalid()
     # todo we should prob switch this to when we send fees don't add to a market but rather the event associated w/ the market, then assign reporters based on fees on event / total fees for all events, this'll save cost and be more appropriate for what we actually want
     if(numMarkets > MARKETS_COUNTING_TOWARDS_SHARE_VALUE):
         numMarkets = MARKETS_COUNTING_TOWARDS_SHARE_VALUE
@@ -122,7 +124,7 @@ def getEventsToReportOn(branch, period, sender, start, end):
         i += 1
     return(slice(events, items = 0, items = numEventsToReportOn): arr)
 
-# In the rare possibility that less than 3 reporters get randomly selected to report on a market in a given commit period, on the last day, we can change the sha3 threshold, UI calls this.
+# In the rare possibility that no one has reported on a market in a given commit period, on the last day, we can change the sha3 threshold, UI calls this.
 # Returns 1 if the event's reporting threshold has been set
 # Errors: 0 if the event can't be reported on
 def setReportingThreshold(event):
@@ -133,9 +135,8 @@ def setReportingThreshold(event):
     periodLength = BRANCHES.getPeriodLength(branch)
     currentVotePeriod = BRANCHES.getVotePeriod(branch)
     inCurrentVotePeriod = (currentVotePeriod == EVENTS.getExpiration(event) / periodLength)
-    reportsCommitted = EXPEVENTS.getReportsCommitted(branch, currentVotePeriod, event)
-    periodHalfEndsInLessThanADay = ((block.timestamp + TWENTY_FOUR_HR) % periodLength) > (periodLength / 2)
-    if(!inCurrentVotePeriod or !periodHalfEndsInLessThanADay or reportsCommitted >= 3 or eventCreatedPriorToFork(event) or !EVENTS.getChallenged(event)):
+    periodHalfEndsInLessThanADay = (block.timestamp + TWENTY_FOUR_HR*3) / periodLength > currentVotePeriod
+    if(!inCurrentVotePeriod or !periodHalfEndsInLessThanADay or EVENTS.getUncaughtOutcome(event) or eventCreatedPriorToFork(event) or !EVENTS.getChallenged(event)):
         return(0)
     EVENTS.setThreshold(event, MAX_THRESHOLD)
     return(1)
@@ -246,3 +247,14 @@ macro abs($a):
     if($a < 0):
         $a = -$a
     $a
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

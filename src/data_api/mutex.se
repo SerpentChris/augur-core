@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
 data mutex
@@ -8,16 +10,22 @@ def init():
     self.controller = 0x0
 
 def acquire():
-    if (self.mutex == 1):
-        throw()
-    self.controller.checkWhitelist(msg.sender)
+    if(self.mutex == 1):
+        ~invalid()
     self.mutex = 1
     return(1)
 
 def release():
-    self.controller.checkWhitelist(msg.sender)
     self.mutex = 0
     return(1)
 
-macro throw():
-    jump(-2**256)
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

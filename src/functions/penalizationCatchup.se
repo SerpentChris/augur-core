@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 ### Allows a user who's had active rep but hasn't reported get caught up on penalizations
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
@@ -87,3 +89,14 @@ macro redistributeRepFromNotReporting():
     REPORTING.subtractRep(branch, REPORTING.repIDToIndex(branch, sender), repChange)
     # sends that rep to the branch rep pool
     REPORTING.addRep(branch, REPORTING.repIDToIndex(branch, branch), repChange)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

@@ -1,22 +1,4 @@
-# This software (Augur) allows buying and selling event outcomes in ethereum
-# Copyright (C) 2015 Forecast Foundation OU
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful, #    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# Any questions please contact joey@augur.net
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
@@ -92,7 +74,7 @@ def init():
     self.controller = 0x0
 
 def sendRepFrom(branch, from, receiver, fxpValue):
-    # checkInvariants(from)
+    checkInvariants(from)
     if (!isCallerWhitelisted()):
         MUTEX.acquire()
 
@@ -102,11 +84,11 @@ def sendRepFrom(branch, from, receiver, fxpValue):
     receiverBalance = REPORTING.getRepBalance(branch, receiver)
     reportedOnRoundTwoEvent = REPORTING.getReportedOnNonFinalRoundTwoEvent(branch, from)
     if(reportedOnRoundTwoEvent && !BACKSTOPS.getFinal(reportedOnRoundTwoEvent)):
-        throw()
+        ~invalid()
     checkSendRepInvariants()
 
     if(!safeToSubtract(senderBalance, fxpValue) or !REPORTING.subtractRep(branch, senderIndex, fxpValue) or !safeToAdd(receiverBalance, fxpValue) or !REPORTING.addRep(branch, receiverIndex, fxpValue)):
-        throw()
+        ~invalid()
     log(type = Transfer, from, receiver, fxpValue)
     if(!isCallerWhitelisted()):
         MUTEX.release()
@@ -132,7 +114,7 @@ def transferFrom(branch, from, receiver, fxpValue):
     checkSendRepInvariants()
 
     if(!safeToSubtract(senderBalance, fxpValue) or !REPORTING.subtractDormantRep(branch, senderIndex, fxpValue) or !safeToAdd(receiverBalance, fxpValue) or !REPORTING.addDormantRep(branch, receiverIndex, fxpValue)):
-      throw()
+      ~invalid()
     log(type=Transfer, from, receiver, fxpValue)
     if(!isCallerWhitelisted()):
         MUTEX.release()
@@ -143,12 +125,12 @@ def claimRep():
         MUTEX.acquire()
     balance = REPCONTRACT.balanceOf(msg.sender)
     if(!REPCONTRACT.transferFrom(msg.sender, 0, balance) or !REPORTING.addReporter(1010101, msg.sender, 0, balance, 0)):
-        throw()
+        ~invalid()
     if(!isCallerWhitelisted()):
         MUTEX.release()
     return(1)
 
-# Allows spender to withdraw from your dormant rep account
+# Allows spender to withdraw from your rep account
 def approve(branch, spender, fxpValue):
     if (!isCallerWhitelisted()):
         MUTEX.acquire()
@@ -199,7 +181,7 @@ macro checkSendRepInvariants():
         reporterWasInOldBranch = REPORTING.getReporterID(parent, REPORTING.repIDToIndex(parent, from))
         if(parent && !tooLate && reporterWasInOldBranch):
             if(!CLAIMINITIALREP.claimInitialRep(parent, branch, call = delegate)):
-                throw()
+                ~invalid()
         else:
             REPORTING.addReporter(branch, from)
         if(!isCallerWhitelisted()):
@@ -213,7 +195,7 @@ macro checkSendRepInvariants():
     # If a user hasn't claimed rep on the child branch yet and it's a fork scenario, don't allow sending rep on the parent branch until the sender claims it
     if(!tooLateForChild && child && REPORTING.getReporterID(branch, REPORTING.repIDToIndex(child, from)) != from):
         if(!CLAIMINITIALREP.claimInitialRep(branch, child, call = delegate)):
-            throw()
+            ~invalid()
 
     if(senderBalance < fxpValue or fxpValue <= 0 or !(self.amountCanSpend[from][msg.sender].branch[branch] >= fxpValue or from == msg.sender)):
         if(!isCallerWhitelisted()):
@@ -221,3 +203,14 @@ macro checkSendRepInvariants():
         return(-5)
     if(from != msg.sender):
         self.amountCanSpend[from][msg.sender].branch[branch] -= fxpValue
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

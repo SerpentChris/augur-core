@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 ### Used to allow users to collect fees from reporting
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
@@ -139,7 +141,7 @@ macro prepareInfoForConsensus():
         CONSENSUS.doRefund(sender, sender)
     # need to pay not reporting bond
     if(msg.value <= safeMul(500000, tx.gasprice)):
-        throw()
+        ~invalid()
     balance = REPORTING.getRepBalance(branch, sender)
     dormantRep = REPORTING.balanceOfReporter(branch, sender)
     # Record rep for next report period before any redistributions
@@ -148,4 +150,15 @@ macro prepareInfoForConsensus():
     EXPEVENTS.setPeriodDormantRep(branch, votePeriod, dormantRep, sender)
     CONSENSUS.setRefund(sender, msg.value)
     if(!send(CONSENSUS, msg.value)):
-        throw()
+        ~invalid()
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

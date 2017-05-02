@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
 INFO = self.controller.lookup('info')
@@ -102,9 +104,9 @@ def resolveFork(branch):
     currentPeriod = block.timestamp / BRANCHES.getPeriodLength(branch)
     winner = BACKSTOPS.getResolved(branch, forkPeriod)
     if(winner):
-        throw()
+        ~invalid()
     if(BACKSTOPS.getResolved(branch, forkPeriod)):
-        throw()
+        ~invalid()
     if(currentPeriod < (forkPeriod + 2)):
         if(!isCallerWhitelisted()):
             MUTEX.release()
@@ -131,3 +133,14 @@ def exchangeRate(branch):
     # return(exchangeRate)
     # for testing we'll just rng the exchange rate :)
     return(sha3(branch))
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

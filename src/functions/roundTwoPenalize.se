@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
 REPORTING = self.controller.lookup('reporting')
@@ -29,6 +31,9 @@ extern mutex: [acquire:[]:int256, release:[]:int256]
 
 ROUNDTWOLIBRARY = self.controller.lookup('roundTwoPenalizeLibrary')
 extern roundTwoPenalizeLibrary: [calculateRepChange:[int256,int256,int256,int256,int256,int256,int256]:int256, handleEthicsAndBondRepRedistribution:[int256,int256,int256,int256,int256,int256,int256,int256,int256,int256,int256,int256]:int256[]]
+
+REPCHANGELIBRARY = self.controller.lookup('repChangeLib')
+extern repChangeLib: [calculateRepChange:[int256,int256,int256,int256,int256,int256,int256]:int256, setController:[int256]:int256, suicideFunds:[int256]:_]
 
 inset('../macros/refund.sem')
 inset('../macros/eventHelpers.sem')
@@ -116,7 +121,7 @@ def penalizeRoundTwoWrong(branch, event):
         # Do the first rep redistribution based on first report and final outcome if reported first time
         CONSENSUS.setPenalized(branch, lastPeriodVotedOn, msg.sender, event)
         if(oldReport):
-            repChange = ROUNDTWOLIBRARY.calculateRepChange(oldReport, POINT_TWO, oldRep, p, event, outcome, numReportedOn)
+            repChange = REPCHANGELIBRARY.calculateRepChange(oldReport, POINT_TWO, oldRep, p, event, outcome, numReportedOn, call = delegate)
             x = array(2)
             x = ROUNDTWOLIBRARY.handleEthicsAndBondRepRedistribution(POINT_TWO, oldEthics, numReportedOn, ethical, repChange, event, repBalance, newAfterRep, bond, forkEvent, branch, lastPeriodVotedOn, call = delegate, outitems=2)
             newAfterRep = x[0]
@@ -124,7 +129,7 @@ def penalizeRoundTwoWrong(branch, event):
             CONSENSUS.increasePenalizedNum(branch, lastPeriodVotedOn, msg.sender, 1)
         # Do the second (for each user) based on second report and final outcome
         if(reportValue):
-            repChange = ROUNDTWOLIBRARY.calculateRepChange(reportValue, POINT_ONE / 4, oldRep, p, event, outcome, numReportedOn)
+            repChange = REPCHANGELIBRARY.calculateRepChange(reportValue, POINT_ONE / 4, oldRep, p, event, outcome, numReportedOn, call = delegate)
             x = array(2)
             x = ROUNDTWOLIBRARY.handleEthicsAndBondRepRedistribution(POINT_ONE / 4, ethics, numReportedOn, ethical, repChange, event, repBalance, newAfterRep, bond, forkEvent, branch, lastPeriodVotedOn, call = delegate, outitems=2)
             newAfterRep = x[0]
@@ -162,3 +167,14 @@ macro checkPenalizeWrongRoundTwoPreconditions():
     if(!CONSENSUS.getRepCollected(branch, msg.sender, lastPeriodVotedOn - 1)):
         MUTEX.release()
         return(-5)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

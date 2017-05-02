@@ -1,22 +1,5 @@
-# This software (Augur) allows buying and selling event outcomes in ethereum
-# Copyright (C) 2015 Forecast Foundation OU
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful, #    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# Any questions please contact joey@augur.net
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 ### Allows creation of a new branch
 
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
@@ -53,14 +36,14 @@ macro MAX_FEE: 10**17
 def init():
     self.controller = 0x0
 
-def createSubbranch(description:str, periodLength, parent, fxpMinTradingFee, oracleOnly, mostRecentChildBranch):
+def createSubbranch(description:str, periodLength, parent, fxpMinTradingFee, mostRecentChildBranch):
     refund()
     if (!isCallerWhitelisted()):
         MUTEX.acquire()
 
     checkBranchCreationPreconditions()
     parentPeriod = BRANCHES.getVotePeriod(parent)
-    branchInfo = string(7 * 32 + len(description))
+    branchInfo = string(6 * 32 + len(description))
     branchInfo[0] = msg.sender
     # creation fee
     branchInfo[1] = 47 * ONE
@@ -69,18 +52,17 @@ def createSubbranch(description:str, periodLength, parent, fxpMinTradingFee, ora
     branchInfo[3] = block.timestamp
     branchInfo[4] = parent
     branchInfo[5] = fxpMinTradingFee
-    branchInfo[6] = oracleOnly
-    mcopy(branchInfo + 7 * 32, description, len(description))
+    mcopy(branchInfo + 6 * 32, description, len(description))
     # people can hand a friend their new branch hash and characteristics and say, "don't trust me? check"
     branch = ripemd160(branchInfo, chars = len(branchInfo))
     currentVotePeriod = (block.timestamp / periodLength) - 1
     ethContract = self.controller.lookup("cash")
-    BRANCHES.initializeBranch(branch, currentVotePeriod, periodLength, fxpMinTradingFee, oracleOnly, parentPeriod, parent, ethContract, mostRecentChildBranch)
+    BRANCHES.initializeBranch(branch, currentVotePeriod, periodLength, fxpMinTradingFee, parentPeriod, parent, ethContract, mostRecentChildBranch)
     # pay creation fee, initialize branch info
     parentEthContract = BRANCHES.getBranchCurrency(parent, 0)
     feePaid = parentEthContract.transferFrom(msg.sender, BRANCHES.getBranchWallet(parent, parentEthContract), 47 * ONE)
     if(!feePaid or !INFO.setInfo(branch, description, msg.sender, 47 * ONE, 0, 0) or !REPORTING.setInitialReporters(branch)):
-        throw()
+        ~invalid()
     if(!isCallerWhitelisted()):
         MUTEX.release()
     return(branch)
@@ -95,7 +77,18 @@ macro checkBranchCreationPreconditions():
         if(!isCallerWhitelisted()):
             MUTEX.release()
         return(-1)
-    if(fxpMinTradingFee <= 0 or fxpMinTradingFee > MAX_FEE or (oracleOnly != 0 and oracleOnly != 1)):
+    if(fxpMinTradingFee <= 0 or fxpMinTradingFee > MAX_FEE):
         if(!isCallerWhitelisted()):
             MUTEX.release()
         return(-1)
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)

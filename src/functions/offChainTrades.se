@@ -1,3 +1,5 @@
+# Copyright (C) 2015 Forecast Foundation OU, full GPL notice in LICENSE
+
 extern controller: [lookup:[int256]:int256, checkWhitelist:[int256]:int256]
 
 MUTEX = self.controller.lookup('mutex')
@@ -12,11 +14,11 @@ data amountFilled[]
 
 data controller
 
-event Order(tokenX:address:indexed, orderSize, tokenY:address:indexed, fxpPrice, expiration, user:address:indexed)
+event Order(tokenX:address:indexed, orderSize, tokenY:address:indexed, fxpPrice, expiration, user:address:indexed, gasPrice)
 
-event Cancel(tokenX:address:indexed, orderSize, tokenY:address:indexed, fxpPrice, expiration, user:address:indexed, v, r, s)
+event Cancel(tokenX:address:indexed, orderSize, tokenY:address:indexed, fxpPrice, expiration, gasPrice, user:address:indexed, v, r, s)
 
-event Trade(maker:address:indexed, taker:address, tokenX:address:indexed, tokenY:address:indexed, amount, fxpPrice, tradeHash)
+event Trade(maker:address:indexed, taker:address, tokenX:address:indexed, tokenY:address:indexed, amount, fxpPrice, tradeHash, gasPrice)
 
 ### Off-chain trading contract:
     # Maker can create an order by hashing the order details then signing it and broadcasting the order and signed order
@@ -52,7 +54,7 @@ def trade(maker: address, v, r, s, tokenX: address, tokenY: address, orderSize, 
         if(!isCallerWhitelisted()):
             MUTEX.release()
         return(-3)
-    if(tx.gasPrice > gasPriceLimit):
+    if(tx.gasprice > gasPriceLimit):
         if(!isCallerWhitelisted()):
             MUTEX.release()
         return(-4)
@@ -62,7 +64,7 @@ def trade(maker: address, v, r, s, tokenX: address, tokenY: address, orderSize, 
     # amount of x * fxpPrice = amount of y
     # amount of x * y / x = amount of y
     if(!tokenX.transferFrom(maker, msg.sender, takerAmount) || !tokenY.transferFrom(msg.sender, maker, safeFxpMul(takerAmount, fxpPrice))):
-        throw()
+        ~invalid()
     log(type = Trade, maker, msg.sender, tokenX, tokenY, amount, fxpPrice, orderHash, gasPriceLimit)
     if(!isCallerWhitelisted()):
         MUTEX.release()
@@ -83,9 +85,9 @@ def cancelOrder(tokenX: address, orderSize, tokenY: address, fxpPrice, expiratio
     if (!isCallerWhitelisted()):
         MUTEX.acquire()
 
-    orderHash = sha3([msg.sender, tokenX, tokenY, orderSize, fxpPrice, expiration, gasPriceLimit], items = 6)
+    orderHash = sha3([msg.sender, tokenX, tokenY, orderSize, fxpPrice, expiration, gasPriceLimit], items = 7)
     if(ecrecover(orderHash, v, r, s) != msg.sender):
-        throw()
+        ~invalid()
     self.amountFilled[orderHash] = orderSize
     log(type = Cancel, tokenX, orderSize, tokenY, fxpPrice, expiration, gasPriceLimit, msg.sender, v, r, s)
 
@@ -103,3 +105,14 @@ macro checkSig($signer, $hash, $v, $r, $s):
 # maker should call approve first [taker also needs to preapprove fund withdrawals]
 macro checkHasAbilityToSpend($owner, $token, $amount):
     token.allowance($owner, $self) >= $amount
+
+def setController(newController):
+    if(msg.sender != self.controller):
+        ~invalid()
+    self.controller = newController
+    return(1)
+
+def suicideFunds(to):
+    if(msg.sender != self.controller):
+        ~invalid()
+    suicide(to)
