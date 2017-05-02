@@ -19,20 +19,15 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 from __future__ import print_function
+from binascii import hexlify, unhexlify
 import argparse
 import os
-import os.path
 import errno
 import re
-from binascii import hexlify, unhexlify
 import shutil
 import sys
 import tempfile
 import warnings
-<<<<<<< HEAD
-import ethereum
-=======
->>>>>>> upstream/develop
 import ethereum.tester
 import ethereum.transactions
 import ethereum.processblock
