@@ -503,7 +503,7 @@ class ContractLoader(object):
         self._interfaces = {}
         self._cleanups = []
         self._tester = ethereum.tester
-        self._tester.gas_limit = 4100000
+        self._tester.gas_limit = 41000000
         self._contracts = {}
         self._paths = {}
         self._temp_dir = None
@@ -580,14 +580,13 @@ class ContractLoader(object):
             contract = self._contracts[name]
             save['contracts'][name] = {
                 'address': hexlify(contract.address).decode(),
-                'interface': self.__interfaces[name],
-                'path': self._paths[name],
+                'interface': self._interfaces[name],
                 }
 
         save['source'] = os.path.abspath(self._temp_dir.source_dir)
 
         with open(path, 'w') as f:
-            json.dump(save, f)
+            json.dump(save, f, sort_keys=True, indent=4)
 
     def load_from_save(self, save_path):
         """Loads contracts from a saved state."""
@@ -612,12 +611,11 @@ class ContractLoader(object):
 
         for name in save['contracts']:
             address = save['contracts'][name]['address']
-            interface = save['contracts'][name]['interace']
+            interface = save['contracts'][name]['interface']
             path = save['contracts'][name]['path']
             raw_address = unhexlify(address)
             self._contracts[name] = ethereum.tester.ABIContract(state, interface, raw_address)
             self._interfaces[name] = interface
-            self._paths[name] = path
 
     def load_from_source(self, source_dir, controller, specials):
         """Loads contracts from a source directory with a new state.
@@ -668,7 +666,7 @@ class ContractLoader(object):
             try:
                 self._compile(path)
             except:
-                print('Error compiling path!')
+                print('Error compiling {}'.format(path))
                 print()
                 with open(path) as f:
                     for i, line in enumerate(f):
