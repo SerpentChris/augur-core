@@ -31,6 +31,7 @@ import warnings
 import ethereum.tester
 import ethereum.transactions
 import ethereum.processblock
+import ethereum.abi
 import socket
 import select
 import json
@@ -483,6 +484,67 @@ def upgrade_controller(source, controller):
         td.commit(source)
 
 
+class ContractFunc(object):
+    """An internal class used to make ABI contract functions."""
+
+    def __init__(self, state, name, address, translator):
+        self.translator = translator
+        self.state = state
+        self.name = name
+        self.address = address
+
+    def __call__(self, *args, **kwds):
+        encoded_call = self.translator.encode_function_call(self.name, args)
+        
+        sender = kwds.get('sender', ethereum.tester.DEFAULT_KEY)
+        value = kwds.get('value', 0)
+        profiling = kwds.get('profiling', 0)
+        output = kwds.get('output', '')
+
+        result = self.state._send(
+            sender,
+            self.address,
+            encoded_call,
+            profiling=profiling)
+
+        outdata = result.get('output', None)
+
+        if outdata and output != 'raw':
+            outdata = self.translator.decode_function_result(self.name, outdata)
+            if len(outdata) == 1:
+                outdata = outdata[0]
+
+        if profiling:
+            result['output'] = outdata
+            return result
+
+        return outdata
+
+    def __str__(self):
+        return '<function {} at address {}>'.format(self.name, hexlify(self.address).decode())
+
+
+class Contract(object):
+    """A contract class similar to ethereum.tester.ABIContract that is nicer with multiprocessing.
+
+    Example:
+    code = serpent.compile(stuff)
+    full_sig = serpent.mk_full_signature(stff)
+    contract = Contract(state, code, fullsig)
+    """
+
+    def __init__(self, state, compiled_code, full_sig, address):
+        self._translator = ethereum.abi.ContractTranslator(full_sig)
+        self._compiled_code = compiled_code
+        self._full_sig = full_sig
+        self._functions = {}
+
+        for item in full_sig:
+            if item['type'] == 'function':
+                name = item['name']
+                self._functions[name] = ContractFunc(state, name, address, self._translator)
+
+
 class ContractLoader(object):
     """A class which updates and compiles Serpent code via ethereum.tester.state.
 
@@ -612,7 +674,6 @@ class ContractLoader(object):
         for name in save['contracts']:
             address = save['contracts'][name]['address']
             interface = save['contracts'][name]['interface']
-            path = save['contracts'][name]['path']
             raw_address = unhexlify(address)
             self._contracts[name] = ethereum.tester.ABIContract(state, interface, raw_address)
             self._interfaces[name] = interface
